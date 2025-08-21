@@ -1,20 +1,14 @@
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
-
 local LocalPlayer = Players.LocalPlayer
-local Camera = Workspace.CurrentCamera
 local Mouse = LocalPlayer:GetMouse()
+local Camera = workspace.CurrentCamera
 
 local Settings = {
     Enabled = false,
     ToggleKey = Enum.KeyCode.Q,
     MaxDistance = 1000,
-    AutoDeactivate = true,
-    TeamCheck = true,
-    IgnoreFriends = true,
-    RequireLineOfSight = true,
     BlacklistedTools = { "Knife" },
 }
 
@@ -26,10 +20,6 @@ end
 local function isAlive(character)
     local hum = character and character:FindFirstChildOfClass("Humanoid")
     return hum and hum.Health > 0
-end
-
-local function sameTeam(other)
-    return LocalPlayer.Team and other.Team == LocalPlayer.Team
 end
 
 local function isToolBlacklisted(tool)
@@ -52,12 +42,20 @@ local function distanceBetweenCharacters(a, b)
     return (rootA.Position - rootB.Position).Magnitude
 end
 
-local function newRaycastParams()
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = { LocalPlayer.Character }
-    params.IgnoreWater = true
-    return params
+local function hasLineOfSight(targetChar)
+    local camPos = Camera.CFrame.Position
+    local rootB = targetChar and (targetChar:FindFirstChild("Head") or targetChar:FindFirstChild("HumanoidRootPart"))
+    if not rootB then return false end
+
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character}
+
+    local result = workspace:Raycast(camPos, (rootB.Position - camPos), raycastParams)
+    if result and result.Instance and not result.Instance:IsDescendantOf(targetChar) then
+        return false
+    end
+    return true
 end
 
 local function crosshairTarget()
@@ -67,15 +65,8 @@ local function crosshairTarget()
     if not char or not isAlive(char) then return nil end
     local player = Players:GetPlayerFromCharacter(char)
     if not player or player == LocalPlayer then return nil end
-    if Settings.TeamCheck and sameTeam(player) then return nil end
-    if Settings.IgnoreFriends and LocalPlayer:IsFriendsWith(player.UserId) then return nil end
     if distanceBetweenCharacters(LocalPlayer.Character, char) > Settings.MaxDistance then return nil end
-    if Settings.RequireLineOfSight then
-        local result = Workspace:Raycast(Camera.CFrame.Position, targetPart.Position - Camera.CFrame.Position, newRaycastParams())
-        if result and not result.Instance:IsDescendantOf(char) then
-            return nil
-        end
-    end
+    if not hasLineOfSight(char) then return nil end
     return char
 end
 
@@ -98,7 +89,5 @@ RunService.RenderStepped:Connect(function()
             LocalPlayer.Character.Humanoid:EquipTool(tool)
         end
         tool:Activate()
-    elseif Settings.AutoDeactivate then
-        pcall(function() tool:Deactivate() end)
     end
 end)
