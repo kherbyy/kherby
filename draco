@@ -1,77 +1,104 @@
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
 local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
 local Mouse = LocalPlayer:GetMouse()
 
-local TriggerBot = {
+local Settings = {
     Enabled = false,
-    Keybind = "Q",
-    BlacklistedTools = {"Knife"},
-    MaxDistance = 1000
+    ToggleKey = Enum.KeyCode.Q,
+    MaxDistance = 1000,
+    AutoDeactivate = true,
+    TeamCheck = true,
+    IgnoreFriends = true,
+    RequireLineOfSight = true,
+    BlacklistedTools = { "Knife" },
 }
 
-local BlacklistedToolsLookup = {}
-for _, toolName in ipairs(TriggerBot.BlacklistedTools) do
-    BlacklistedToolsLookup[toolName] = true
+local BlacklistedTools = {}
+for _, name in ipairs(Settings.BlacklistedTools) do
+    BlacklistedTools[name] = true
 end
 
-local function isValidTarget(character)
-    local humanoid = character:FindFirstChild("Humanoid")
-    return humanoid and humanoid.Health > 0
+local function isAlive(character)
+    local hum = character and character:FindFirstChildOfClass("Humanoid")
+    return hum and hum.Health > 0
+end
+
+local function sameTeam(other)
+    return LocalPlayer.Team and other.Team == LocalPlayer.Team
 end
 
 local function isToolBlacklisted(tool)
-    return BlacklistedToolsLookup[tool.Name] == true
+    return tool and tool:IsA("Tool") and BlacklistedTools[tool.Name]
 end
 
-local function getDistanceFromCharacter(character)
-    local localCharacter = LocalPlayer.Character
-    if not localCharacter or not character then return math.huge end
-    
-    local localRoot = localCharacter:FindFirstChild("HumanoidRootPart") or localCharacter:FindFirstChild("Head")
-    local targetRoot = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Head")
-    
-    if not localRoot or not targetRoot then return math.huge end
-    
-    return (localRoot.Position - targetRoot.Position).Magnitude
-end
-
-local function findTarget()
-    local target = Mouse.Target
-    if not target then return nil end
-    
-    local character = target:FindFirstAncestorOfClass("Model")
-    if not character or not character:FindFirstChild("Humanoid") then return nil end
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character == character then
-            if isValidTarget(character) and getDistanceFromCharacter(character) <= TriggerBot.MaxDistance then
-                return character
-            end
+local function bestTool(character)
+    for _, tool in ipairs(character:GetChildren()) do
+        if tool:IsA("Tool") and not isToolBlacklisted(tool) then
+            return tool
         end
     end
-    
     return nil
 end
 
-UserInputService.InputBegan:Connect(function(input, processed)
-    if not processed and input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode[TriggerBot.Keybind] then
-        TriggerBot.Enabled = not TriggerBot.Enabled
+local function distanceBetweenCharacters(a, b)
+    local rootA = a:FindFirstChild("HumanoidRootPart") or a:FindFirstChild("Head")
+    local rootB = b:FindFirstChild("HumanoidRootPart") or b:FindFirstChild("Head")
+    if not rootA or not rootB then return math.huge end
+    return (rootA.Position - rootB.Position).Magnitude
+end
+
+local function newRaycastParams()
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { LocalPlayer.Character }
+    params.IgnoreWater = true
+    return params
+end
+
+local function crosshairTarget()
+    local targetPart = Mouse.Target
+    if not targetPart then return nil end
+    local char = targetPart:FindFirstAncestorOfClass("Model")
+    if not char or not isAlive(char) then return nil end
+    local player = Players:GetPlayerFromCharacter(char)
+    if not player or player == LocalPlayer then return nil end
+    if Settings.TeamCheck and sameTeam(player) then return nil end
+    if Settings.IgnoreFriends and LocalPlayer:IsFriendsWith(player.UserId) then return nil end
+    if distanceBetweenCharacters(LocalPlayer.Character, char) > Settings.MaxDistance then return nil end
+    if Settings.RequireLineOfSight then
+        local result = Workspace:Raycast(Camera.CFrame.Position, targetPart.Position - Camera.CFrame.Position, newRaycastParams())
+        if result and not result.Instance:IsDescendantOf(char) then
+            return nil
+        end
+    end
+    return char
+end
+
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Settings.ToggleKey then
+        Settings.Enabled = not Settings.Enabled
     end
 end)
 
 RunService.RenderStepped:Connect(function()
-    if not TriggerBot.Enabled then return end
-    
-    local localCharacter = LocalPlayer.Character
-    if not localCharacter then return end
-    
-    local tool = localCharacter:FindFirstChildWhichIsA('Tool')
+    if not Settings.Enabled then return end
+    local myChar = LocalPlayer.Character
+    if not myChar or not isAlive(myChar) then return end
+    local tool = bestTool(myChar)
     if not tool or isToolBlacklisted(tool) then return end
-    
-    local target = findTarget()
-    if not target then return end
-    
-    tool:Activate()
+    local targetChar = crosshairTarget()
+    if targetChar then
+        if tool.Parent ~= myChar then
+            LocalPlayer.Character.Humanoid:EquipTool(tool)
+        end
+        tool:Activate()
+    elseif Settings.AutoDeactivate then
+        pcall(function() tool:Deactivate() end)
+    end
 end)
