@@ -1,0 +1,77 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+
+local TriggerBot = {
+    Enabled = false,
+    Keybind = "Q",
+    BlacklistedTools = {"Knife"},
+    MaxDistance = 1000
+}
+
+local BlacklistedToolsLookup = {}
+for _, toolName in ipairs(TriggerBot.BlacklistedTools) do
+    BlacklistedToolsLookup[toolName] = true
+end
+
+local function isValidTarget(character)
+    local humanoid = character:FindFirstChild("Humanoid")
+    return humanoid and humanoid.Health > 0
+end
+
+local function isToolBlacklisted(tool)
+    return BlacklistedToolsLookup[tool.Name] == true
+end
+
+local function getDistanceFromCharacter(character)
+    local localCharacter = LocalPlayer.Character
+    if not localCharacter or not character then return math.huge end
+    
+    local localRoot = localCharacter:FindFirstChild("HumanoidRootPart") or localCharacter:FindFirstChild("Head")
+    local targetRoot = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Head")
+    
+    if not localRoot or not targetRoot then return math.huge end
+    
+    return (localRoot.Position - targetRoot.Position).Magnitude
+end
+
+local function findTarget()
+    local target = Mouse.Target
+    if not target then return nil end
+    
+    local character = target:FindFirstAncestorOfClass("Model")
+    if not character or not character:FindFirstChild("Humanoid") then return nil end
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character == character then
+            if isValidTarget(character) and getDistanceFromCharacter(character) <= TriggerBot.MaxDistance then
+                return character
+            end
+        end
+    end
+    
+    return nil
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode[TriggerBot.Keybind] then
+        TriggerBot.Enabled = not TriggerBot.Enabled
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if not TriggerBot.Enabled then return end
+    
+    local localCharacter = LocalPlayer.Character
+    if not localCharacter then return end
+    
+    local tool = localCharacter:FindFirstChildWhichIsA('Tool')
+    if not tool or isToolBlacklisted(tool) then return end
+    
+    local target = findTarget()
+    if not target then return end
+    
+    tool:Activate()
+end)
